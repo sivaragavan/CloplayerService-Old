@@ -1,0 +1,23 @@
+-module(cloreader).
+-export([start/1, stop/0, parse_xml/1]).
+
+start(Port) ->
+	inets:start(),
+	misultin:start_link([{port, Port}, {loop, fun(Req) -> handle_http(Req) end}]).
+
+stop() ->
+	misultin:stop().
+
+handle_http(Req) ->	
+	{ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} = httpc:request(get, {"http://rss.cnn.com/rss/edition.rss", []}, [], []),
+	%%{ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} = httpc:request(get, {"http://feeds.feedburner.com/TechCrunch/", []}, [], []),
+	{ok, Elements, _Tail} = erlsom:simple_form(Body),
+	{_, List2} = lists:split(11,element(3, hd(element(3, Elements)))),
+	Req:ok(binary_to_list(jsx:term_to_json(parse_xml(List2)))).
+
+parse_xml(Elements) -> parse_xml(Elements, []).
+
+parse_xml([], Acc) ->  Acc;
+parse_xml([H|T], Acc) ->
+	parse_xml(T, [list_to_binary(hd(element(3,hd(element(3,H)))))|Acc]).
+

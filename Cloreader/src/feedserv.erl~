@@ -1,0 +1,45 @@
+%% Event server
+-module(feedserv).
+-export([start/0, terminate/0, init/0, loop/0]).
+
+start() ->
+    inets:start(),
+    register(?MODULE, Pid1=spawn(?MODULE, init, [])),
+    Pid1.
+
+terminate() ->
+    ?MODULE ! shutdown.
+
+init() ->
+    %% Loading topics from a static file could be done here.
+    %% You would need to pass an argument to init (maybe change the functions
+    %% start/0 and start_link/0 to start/1 and start_link/1) telling where the
+    %% resource to find the topics is. Then load it from here.
+    %% Another option is to just pass the topics straight to the server
+    %% through this function.
+    loop().
+
+%%% The Server itself
+
+loop() ->
+    %%{ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} = httpc:request(get, {"http://rss.cnn.com/rss/edition.rss", []}, [], []),
+    {ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} = httpc:request(get, {"http://feeds.feedburner.com/TechCrunch", []}, [], []),
+    {ok, Elements, _Tail} = erlsom:simple_form(Body),
+    {_, List2} = lists:split(11,element(3, hd(element(3, Elements)))),
+    Stories = parse_xml(List2),
+    insert_stories(1, Stories, "CNN"),
+    timer:sleep(15000),
+    loop().
+
+parse_xml(Elements) -> parse_xml(Elements, []).
+
+parse_xml([], Acc) ->  Acc;
+parse_xml([{_, _, [HT, Guid, Link, DT, Date]}|T], Acc) ->
+	parse_xml(T, [{hd(element(3,HT)), hd(element(3,Guid)), hd(element(3,Link)), hd(element(3,DT)), hd(element(3,Date))}|Acc]).
+
+
+insert_stories(_,[],_) -> ok;
+insert_stories(TopicId, [{HT, Guid, Link, DT, Date} | Rest], Source) ->
+    newsserv:story_add(TopicId, HT, Guid, Link, DT, Date, Source),
+    insert_stories(TopicId, Rest, Source).
+    
