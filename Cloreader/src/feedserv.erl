@@ -22,23 +22,17 @@ init() ->
 %%% The Server itself
 
 loop() ->
-    {ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} = httpc:request(get, {"http://rss.cnn.com/rss/edition.rss", []}, [], []),
-    {ok, Elements, _Tail} = erlsom:simple_form(Body),
-    {_, List2} = lists:split(11,element(3, hd(element(3, Elements)))),
-    Stories = parse_xml(List2),
-    insert_stories(1, Stories, "CNN"),
-    timer:sleep(15000),
+    {feed, Source0, Url0, Stories0} = feedparser:parse_url("http://timesofindia.feedsportal.com/c/33039/f/533916/index.rss"),
+    insert_stories(1, Stories0, Source0),
+    {feed, Source, Url, Stories} = feedparser:parse_url("http://rss.cnn.com/rss/edition.rss"),
+    insert_stories(1, Stories, Source),
+    {feed, Source1, Url1, Stories1} = feedparser:parse_url("http://feeds.feedburner.com/TechCrunch/"),
+    insert_stories(1, Stories1, Source1),
+    timer:sleep(30000),
     loop().
 
-parse_xml(Elements) -> parse_xml(Elements, []).
-
-parse_xml([], Acc) ->  Acc;
-parse_xml([{_, _, [HT, Guid, Link, DT, Date]}|T], Acc) ->
-	parse_xml(T, [{hd(element(3,HT)), hd(element(3,Guid)), hd(element(3,Link)), hd(element(3,DT)), hd(element(3,Date))}|Acc]).
-
-
 insert_stories(_,[],_) -> ok;
-insert_stories(TopicId, [{HT, Guid, Link, DT, Date} | Rest], Source) ->
-    newsserv:story_add(TopicId, HT, Guid, Link, DT, Date, Source),
+insert_stories(TopicId, [{feedentry, HT, Date, Link, DT} | Rest], Source) ->
+    newsserv:story_add(TopicId, HT, Link, Link, DT, Date, Source),
     insert_stories(TopicId, Rest, Source).
     
