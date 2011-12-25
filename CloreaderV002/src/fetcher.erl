@@ -1,4 +1,3 @@
-
 %% Copyright (c) 2007, Kevin A. Smith<kevin@hypotheticalabs.com>
 %% 
 %% All rights reserved.
@@ -14,7 +13,7 @@
 %% notice, this list of conditions and the following disclaimer in the 
 %% documentation and/or other materials provided with the distribution.
 %% 
-%% * Neither the name of the hypotheticalabs.com nor the names of its 
+%% * Neither the name of hypotheticalabs.com nor the names of its 
 %% contributors may be used to endorse or promote products derived from 
 %% this software without specific prior written permission.
 %% 
@@ -31,58 +30,41 @@
 %% THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 %% DAMAGE.
 
--module(feedparser).
+-module(fetcher).
 
--export([parse_url/1, parse_file/1]).
+-export([fetch/1, fetch/2]).
 
--include_lib("xmerl/include/xmerl.hrl").
--include("feedparser.hrl").
+fetch(Url) when is_list(Url) ->
+	fetch(Url, []).
 
-parse_url(Url) ->
-	case fetcher:fetch(Url) of
-		{error, Reason} ->
-			throw(Reason);
-		{ok, ContentType, _Status, _Headers, Body} ->
-			parse(examine_content_type(ContentType), Body)
+fetch(Url, Headers) when is_list(Url) and is_list(Headers) ->
+	case http:request(get, {Url, Headers}, [], []) of
+		{ok, Result} -> 
+			{Status, RespHeaders, Body} = Result,
+			{ok, extract_content_type(RespHeaders), Status, RespHeaders, Body};
+		{error, Reason} -> 
+			{error, Reason}
 	end.
 
-parse_file(FilePath) ->
-	{ok, Raw} = file:read_file(FilePath),
-	Feed = binary_to_list(Raw),
-	parse(examine_content(Feed), Feed).
-					
-examine_content(Feed) ->
-	case regexp:match(Feed, "<feed") of
-		{match, _, _} ->
-			atom;
-		nomatch ->
-			case regexp:match(Feed, "<channel") of
-				{match, _, _} ->
-					rss;
-				nomatch ->
-					unknown
-			end
+extract_content_type(Headers) ->
+	case extract_content_type(Headers, []) of
+		[H|_T] ->
+			H;
+		true  ->
+			"none"
 	end.
+extract_content_type([H|T], Accum) ->
+	{Name, Value} = H,
+	if Name == "content-type" ->
+			BreakPos = string:rstr(Value, ";") - 1,
+			if BreakPos > 0 ->
+					extract_content_type(T, [string:sub_string(Value, 1, BreakPos)|Accum]);
+			   true ->
+					extract_content_type(T, [Value|Accum])
+			end;
+	   true ->
+			extract_content_type(T, Accum)
+	end;
+extract_content_type([], Accum) ->
+	Accum.
 	
-examine_content_type(ContentType) ->
-	case ContentType of
-		"text/xml" ->
-			rss;
-		"application/rss+xml" ->
-			rss;
-		"application/atom+xml" ->
-			atom;
-		"application/xml" ->
-			rss;
-		true ->
-			unknown
-	end.
-
-parse(unknown, _Feed) ->
-	void;
-
-parse(rss, Feed) ->
-	rss_parser:parse_feed(Feed);
-
-parse(atom, Feed) ->
-	atom_parser:parse_feed(Feed).

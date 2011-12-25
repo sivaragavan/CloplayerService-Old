@@ -1,4 +1,3 @@
-
 %% Copyright (c) 2007, Kevin A. Smith<kevin@hypotheticalabs.com>
 %% 
 %% All rights reserved.
@@ -31,58 +30,15 @@
 %% THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 %% DAMAGE.
 
--module(feedparser).
+-record(feedentry,
+		{title,
+		 date,
+		 permalink,
+		 content
+		 }).
 
--export([parse_url/1, parse_file/1]).
+-record(feed,
+		{title,
+		 url,
+		 entries}).
 
--include_lib("xmerl/include/xmerl.hrl").
--include("feedparser.hrl").
-
-parse_url(Url) ->
-	case fetcher:fetch(Url) of
-		{error, Reason} ->
-			throw(Reason);
-		{ok, ContentType, _Status, _Headers, Body} ->
-			parse(examine_content_type(ContentType), Body)
-	end.
-
-parse_file(FilePath) ->
-	{ok, Raw} = file:read_file(FilePath),
-	Feed = binary_to_list(Raw),
-	parse(examine_content(Feed), Feed).
-					
-examine_content(Feed) ->
-	case regexp:match(Feed, "<feed") of
-		{match, _, _} ->
-			atom;
-		nomatch ->
-			case regexp:match(Feed, "<channel") of
-				{match, _, _} ->
-					rss;
-				nomatch ->
-					unknown
-			end
-	end.
-	
-examine_content_type(ContentType) ->
-	case ContentType of
-		"text/xml" ->
-			rss;
-		"application/rss+xml" ->
-			rss;
-		"application/atom+xml" ->
-			atom;
-		"application/xml" ->
-			rss;
-		true ->
-			unknown
-	end.
-
-parse(unknown, _Feed) ->
-	void;
-
-parse(rss, Feed) ->
-	rss_parser:parse_feed(Feed);
-
-parse(atom, Feed) ->
-	atom_parser:parse_feed(Feed).

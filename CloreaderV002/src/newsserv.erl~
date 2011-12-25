@@ -1,0 +1,277 @@
+%% Event server
+-module(newsserv).
+-export([start/0, terminate/0, init/0, loop/1,
+         execute_api/4, story_add/7, topics_sources/0]).
+
+-include("cloreader.hrl").
+
+%%% User Interface
+
+start() ->
+    register(?MODULE, Pid1=spawn(?MODULE, init, [])),
+    Pid1.
+
+terminate() ->
+    ?MODULE ! shutdown.
+
+init() ->
+    
+    TechTopic = #topic{name=list_to_binary("Technology"), sourceList=[
+								      {"TechCrunch", "http://feeds.feedburner.com/TechCrunch/"},
+								      {"Technology Review", "http://feeds.technologyreview.com/technology_review_in_top_stories"},
+								      {"Wired", "http://feeds.wired.com/wired/index"}
+								      %%{"The Week", "http://theweek.com/topic/sub_section/science_tech/technology.rss"}
+								     ]},
+    
+    IndiaTopic = #topic{name=list_to_binary("India"), sourceList=[
+								  %%{"The Hindu", "http://www.hindu.com/rss/02hdline.xml"},
+								  {"Times Of India", "http://timesofindia.feedsportal.com/c/33039/f/533916/index.rss"},
+								  {"Hindustan Times", "http://feeds.hindustantimes.com/HT-IndiaSectionPage-Topstories"}
+								 ]},
+    
+    WorldTopic = #topic{name=list_to_binary("World"), sourceList=[
+								  {"CNN", "http://rss.cnn.com/rss/edition_world.rss"},
+								  {"BBC", "http://feeds.bbci.co.uk/news/world/rss.xml"},
+								  {"Reuters", "http://feeds.reuters.com/Reuters/worldNews"}
+								  %%{"The Hindu", "http://www.hindu.com/rss/03hdline.xml"},
+								  %%{"The Week", "http://theweek.com/topic/sub_section/news_opinion/world_news_opinion.rss"}
+								 ]},
+    
+    SportsTopic = #topic{name=list_to_binary("Sports"), sourceList=[
+								    %%{"Crickinfo", "http://static.espncricinfo.com/rss/livescores.xml"}
+								    {"Espn / Star", "http://www.espnstar.com/headlines-rss/"}
+								    %%{"The Hindu", "http://www.hindu.com/rss/07hdline.xml"}
+								   ]},
+    
+    BusinessTopic = #topic{name=list_to_binary("Business"), sourceList=[
+									%%{"Forbes", "http://www.forbes.com/markets/feed/"},
+									{"Economic Times", "http://economictimes.feedsportal.com/c/33041/f/534024/index.rss"}
+									%%{"The Hindu", "http://www.hindu.com/rss/06hdline.xml"},
+									%%{"The Week", "http://theweek.com/topic/sub_section/business/world_business.rss"}
+								       ]},
+    
+    S = #state{topics=dict:from_list([
+				       {1, TechTopic},
+				       {2, IndiaTopic},
+				       {3, WorldTopic},
+				       {4, SportsTopic},
+				       {5, BusinessTopic}
+				      ])
+	      },
+
+    S1 = add_user(S, 1),
+    S2 = add_user(S1, 12),
+    S3 = add_user(S2, 123),
+    loop(S3).
+
+execute_api(Method, Path, Req, Args) ->
+    Ref = make_ref(),
+    ?MODULE ! {self(), Ref, Method, Path, Req, Args},
+    receive
+        {Ref, Msg} -> Msg
+    after 5000 ->
+	    [{error, timeout}]
+    end.
+
+
+story_add(TopicId, HeadlineText, Guid, Link, DetailText, Date, Source) ->
+    Ref = make_ref(),
+    ?MODULE ! {self(), Ref, {story, add, TopicId, {HeadlineText, Guid, Link, DetailText, Date, Source}}},
+    receive
+	{Ref, Msg} ->
+	    Msg
+    after 5000 ->
+	    [{error, timeout}]
+    end.
+
+topics_sources() ->
+    Ref = make_ref(),
+    ?MODULE ! {self(), Ref, {topics, sources}},
+    receive
+	{Ref, Msg} ->
+	    Msg
+    after 5000 ->
+	    [{error, timeout}]
+    end.
+
+
+%%% The Server itself
+
+loop(S=#state{}) ->
+    receive
+        {Pid, MsgRef, 'GET', ["api", UserIdString, "login"], _Req, _Args} ->
+	    UserId = element(1,string:to_integer(UserIdString)),
+	    S1 = add_user(S, UserId),
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S1);
+        {Pid, MsgRef, 'GET', ["api", UserIdString, "stories", "next"], _Req, _Args} ->
+	    UserId = element(1,string:to_integer(UserIdString)),
+	    {S1, {StoryId, TopicId}} = get_next_story(S, UserId),
+	    if
+		StoryId > 0 ->
+		    Topic = dict:fetch(TopicId, S#state.topics),
+		    Story = dict:fetch(StoryId, Topic#topic.storyList),
+		    Pid ! {MsgRef, [{storyId, StoryId}, {topicId, TopicId}, {topicName, Topic#topic.name}, {headlineText, Story#story.headlineText}, {date, Story#story.date}, {source, Story#story.source}, {detailText, Story#story.detailText}, {guid, Story#story.guid}, {link, Story#story.link}]};
+		true ->
+		    Pid ! {MsgRef, [{storyId, StoryId}, {topicId, TopicId}]}
+	    end,
+            loop(S1);
+        {Pid, MsgRef, 'GET', ["api", UserIdString, "stories", "previous"], _Req, _Args} ->
+	    UserId = element(1,string:to_integer(UserIdString)),
+	    {S1, {StoryId, TopicId}} = get_previous_story(S, UserId),
+            if
+                StoryId > 0 ->
+                    Topic = dict:fetch(TopicId, S#state.topics),
+                    Story = dict:fetch(StoryId, Topic#topic.storyList),
+                    Pid ! {MsgRef, [{storyId, StoryId}, {topicId, TopicId}, {topicName, Topic#topic.name}, {headlineText, Story#story.headlineText}, {date, Story#story.date}, {source, Story#story.source}, {detailText, Story#story.detailText}, {guid, Story#story.guid}, {link, Story#story.link}]};
+                true ->
+                    Pid ! {MsgRef, [{storyId, StoryId}, {topicId, TopicId}]}
+            end,
+            loop(S1);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "more"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "less"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "mute"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "unmute"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "only"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "add"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", TopicId, "remove"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", "all", "unmute"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", "all"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+        {Pid, MsgRef, 'GET', ["api", UserId, "topics", "new"], _Req, _Args} ->
+            Pid ! {MsgRef, [{userId, UserId}]},
+            loop(S);
+	{Pid, MsgRef, 'GET', Path, _Req, _Args} ->
+	    Pid ! {MsgRef, [{errorResponse, Path}]},
+	    loop(S);
+	{Pid, MsgRef, {topics, sources}} ->
+	    SourceList = dict:fold(fun(K,V,A) -> [{K, V#topic.sourceList}|A] end,[], S#state.topics),
+            Pid ! {MsgRef, SourceList},
+            loop(S);
+	{Pid, MsgRef, {story, add, TopicId, {HeadlineText, Guid, Link, DetailText, Date, Source}}} ->
+            S1 = add_story(S, TopicId, {HeadlineText, Guid, Link, DetailText, Date, Source}),
+	    Pid ! {MsgRef, true},    
+	    loop(S1)
+    end.
+
+
+add_user(S, UserId) ->
+    case dict:find(UserId, S#state.users) of
+        {ok, _} ->
+	    S;
+	error ->
+            NewUser = #user{},
+            NewUsers = dict:store(UserId, NewUser, S#state.users),
+            S#state{users=NewUsers}
+    end.
+
+
+get_next_story(S, UserId) ->
+    User = dict:fetch(UserId, S#state.users),
+    Current = {CurrentStory, _} = User#user.current,
+    StoryStack = User#user.storyStack,
+    {NewCurrent, NewStoryStack} = pop_story_stack(StoryStack),
+    NewUser = User#user{current = NewCurrent, storyStack = NewStoryStack}, 
+    if
+	CurrentStory > 0  ->
+	    ReadStories = NewUser#user.readStories,
+	    NewReadStories = [Current | ReadStories],
+	    NewUserAgain = NewUser#user{readStories = NewReadStories},
+	    NewUsers = dict:store(UserId, NewUserAgain, S#state.users),
+	    {S#state(users = NewUsers}, NewCurrent};
+	true ->
+	    NewUsers = dict:store(UserId, NewUser, S#state.users),
+	    {S#state{users = NewUsers}, NewCurrent}
+    end.
+
+pop_story_stack([]) ->
+    {{0,0}, []};
+pop_story_stack(StoryStack) ->
+    [NewCurrent | NewStoryStack] = StoryStack,
+    {NewCurrent, NewStoryStack}.
+
+get_previous_story(S, UserId) ->
+    User = dict:fetch(UserId, S#state.users),
+    Current = {CurrentStory, _} = User#user.current,
+    ReadStories = User#user.readStories,
+    if
+        CurrentStory > 0  ->
+	    NewCurrent = {NewCurrentStory, _} = get_nth_read_story(1, ReadStories),
+	    if
+		NewCurrentStory > 0 ->
+		    StoryStack = User#user.storyStack,
+		    NewStoryStack = [Current | StoryStack],
+		    NewUser = User#user{current = {-1,0}, storyStack = NewStoryStack}, 
+		    NewUsers = dict:store(UserId, NewUser, S#state.users),
+		    {S#state{users=NewUsers}, NewCurrent};
+		true ->
+		    {S, NewCurrent}
+	    end;
+	true ->
+	    NewCurrent = {NewCurrentStory, _} = get_nth_read_story(abs(CurrentStory - 1), ReadStories),
+	    if
+		NewCurrentStory > 0 ->
+		    NewUser = User#user{current = {CurrentStory - 1, 0}}, 
+		    NewUsers = dict:store(UserId, NewUser, S#state.users),
+		    {S#state{users=NewUsers}, NewCurrent};
+		true ->
+		    {S, NewCurrent}
+	    end
+    end.
+
+get_nth_read_story(N, ReadStories) ->
+    N1 = length(ReadStories),
+    if
+	N1 < N ->
+	    {0, 0};
+	true ->
+	    lists:nth(N, ReadStories)
+    end.
+
+
+add_story(S, TopicId, {HeadlineText, Guid, Link, DetailText, Date, Source}) ->
+    
+    Topic = dict:fetch(TopicId, S#state.topics),
+    StoryList = dict:to_list(Topic#topic.storyList),
+    case lists:any(fun({_, Story}) -> Story#story.guid == list_to_binary(Guid) end, StoryList) of
+	false ->
+	    io:format("Processing update~n"),
+	    NewStoryId = Topic#topic.lastStoryId + 1,
+	    NewStory = #story{headlineText=list_to_binary(HeadlineText),date=list_to_binary(Date), source=list_to_binary(Source), guid=list_to_binary(Guid), link=list_to_binary(Link), detailText=list_to_binary(DetailText)},
+	    NewStoryList = dict:store(NewStoryId, NewStory, Topic#topic.storyList),
+	    NewTopic = Topic#topic{storyList=NewStoryList, lastStoryId=NewStoryId},
+	    NewTopics = dict:store(TopicId, NewTopic, S#state.topics),
+	    S1 = push_story_to_users(S, {NewStoryId, TopicId}, dict:to_list(S#state.users)),
+	    S1#state{topics=NewTopics};
+	true ->
+	    S
+    end.
+
+push_story_to_users(S, _, []) -> 
+    S;
+push_story_to_users(S, {StoryId, TopicId}, [User | UserList]) ->
+    push_story_to_users(push_story_to_user(S, {StoryId, TopicId}, User), {StoryId, TopicId}, UserList).
+
+push_story_to_user(S, NewStory, {UserId, User}) ->
+    StoryStack = User#user.storyStack,    
+    NewStoryStack = [ NewStory | StoryStack],
+    NewUser = User#user{storyStack = NewStoryStack},
+    NewUsers = dict:store(UserId, NewUser, S#state.users),
+    S#state{users=NewUsers}.

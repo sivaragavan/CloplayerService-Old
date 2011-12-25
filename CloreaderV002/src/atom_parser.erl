@@ -30,81 +30,80 @@
 %% THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 %% DAMAGE.
 
--module(rss_parser).
+-module(atom_parser).
 
 -export([parse_feed/1]).
 
 -include("feedparser.hrl").
 
 parse_feed(RawFeed) ->
-    CB = fun(Event, State) ->
-		 handle_event(Event, State)
-	 end,
-    erlsom:sax(RawFeed, [], CB).
+	CB = fun(Event, State) ->
+				 handle_event(Event, State)
+		 end,
+	erlsom:sax(RawFeed, [], CB).
 
 handle_event(startDocument, _State) ->
+	io:format("startDocument~n"),
 	[{cmd, start}, {md, #feed{}}, {entries, []}];
+
+handle_event({endElement, _NS, "feed", _}, [{cmd, _Command}, {md, Feed}, {entries, Entries}]) ->
+	io:format("end feed element~n"),
+	Feed#feed{entries=Entries};
 
 handle_event({startElement, _NS, "title", _, _Attrs}, [{cmd, start}, {md, Feed}, {entries, Entries}]) ->
 	build_state(titletext, Feed, Entries);
 
 handle_event({characters, Text}, [{cmd, titletext}, {md, Feed}, {entries, Entries}]) ->
-	build_state(start, Feed#feed{title=Text}, Entries);
+	build_state(permalink, Feed#feed{title=Text}, Entries);
 
-handle_event({startElement, _NS, "link", _, _Attrs}, [{cmd, start}, {md, Feed}, {entries, Entries}]) ->
+handle_event({startElement, _NS, "id", _, _Attrs}, [{cmd, permalink}, {md, Feed}, {entries, Entries}]) ->
 	build_state(permalinktext, Feed, Entries);
 
 handle_event({characters, Text}, [{cmd, permalinktext}, {md, Feed}, {entries, Entries}]) ->
-	build_state(start, Feed#feed{url=Text}, Entries);
+	io:format("permalinktext~n"),
+	build_state(entry, Feed#feed{url=Text}, Entries);
 
-handle_event({startElement, _NS, "item", _, _Attrs}, [{cmd, _}, {md, Feed}, {entries, Entries}]) ->
-	build_state(entry, Feed, [#feedentry{content=""}|Entries]);
+handle_event({startElement, _NS, "link", _, Attrs}, [{cmd, permalink}, {md, Feed}, {entries, Entries}]) ->
+	io:format("permalink~n"),
+	build_state(entry, Feed#feed{url=extract_link_url(Attrs)}, Entries);
 
-handle_event({startElement, _NS, "title", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
+handle_event({startElement, _NS, "entry", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
+	build_state(entrytitle, Feed, [#feedentry{content=""}|Entries]);
+
+handle_event({endElement, _NS, "entry", _}, [{cmd, _Command}, {md, Feed}, {entries, Entries}]) ->
+	build_state(entry, Feed, Entries);
+
+handle_event({startElement, _NS, "title", _, _Attrs}, [{cmd, entrytitle}, {md, Feed}, {entries, Entries}]) ->
 	build_state(entrytitletext, Feed, Entries);
 
 handle_event({characters, Text}, [{cmd, entrytitletext}, {md, Feed}, {entries, Entries}]) ->
+	io:format("getting entrytitletext~n"),
 	[Entry|T] = Entries,
 	UpdatedEntry = Entry#feedentry{title=Text},
-	build_state(entry, Feed, [UpdatedEntry|T]);
+	build_state(entrylink, Feed, [UpdatedEntry|T]);
 
-handle_event({startElement, _NS, "link", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
-	build_state(entrylinktext, Feed, Entries);
-
-handle_event({characters, Text}, [{cmd, entrylinktext}, {md, Feed}, {entries, Entries}]) ->
+handle_event({startElement, _NS, "link", _, Attrs}, [{cmd, entrylink}, {md, Feed}, {entries, Entries}]) ->
+	io:format("getting entrylink~n"),
  	[Entry|T] = Entries,
- 	UpdatedEntry = Entry#feedentry{permalink=Text},
-	build_state(entry, Feed, [UpdatedEntry|T]);
+ 	UpdatedEntry = Entry#feedentry{permalink=extract_link_url(Attrs)},
+	build_state(entrycontent, Feed, [UpdatedEntry|T]);
 
-handle_event({startElement, _NS, "description", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
+handle_event({startElement, _NS, "content", _, _Attrs}, [{cmd, entrycontent}, {md, Feed}, {entries, Entries}]) ->
+	io:format("getting entrycontent~n"),
 	build_state(entrycontenttext, Feed, Entries);
 
 handle_event({characters, Text}, [{cmd, entrycontenttext}, {md, Feed}, {entries, Entries}]) ->
  	[Entry|T] = Entries,
 	UpdatedEntry = Entry#feedentry{content=lists:append(Entry#feedentry.content, Text)},
 	UpdatedEntries = [UpdatedEntry|T],
-	build_state(entry, Feed, UpdatedEntries);
-
-handle_event({startElement, _NS, "pubDate", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
-	build_state(entrydatetext, Feed, Entries);
-
-handle_event({characters, Text}, [{cmd, entrydatetext}, {md, Feed}, {entries, Entries}]) ->
- 	[Entry|T] = Entries,
-	UpdatedEntry = Entry#feedentry{date=Text},
-	UpdatedEntries = [UpdatedEntry|T],
-	build_state(entry, Feed, UpdatedEntries);
-
-handle_event({startElement, _NS, "content", _, _Attrs}, [{cmd, entry}, {md, Feed}, {entries, Entries}]) ->
-	build_state(content, Feed, Entries);
-
-handle_event({endElement, _NS, "content", _}, [{cmd, _Command}, {md, Feed}, {entries, Entries}]) ->
-	build_state(entry, Feed, Entries);
-
-handle_event({endElement, _NS, "rss", _}, [{cmd, _Command}, {md, Feed}, {entries, Entries}]) ->
-	Feed#feed{entries=Entries};
+	build_state(entrycontenttext, Feed, UpdatedEntries);
 
 handle_event(_Event, State) ->
 	State.
+
+extract_link_url(Attrs) ->
+	[Href|_T] = [Url || {attribute, "href", "href", [], Url} <- Attrs],
+	Href.
 
 build_state(Command, Feed, Entries) ->
 	lists:flatten([build_cmd(Command), build_state(Feed, Entries)]).

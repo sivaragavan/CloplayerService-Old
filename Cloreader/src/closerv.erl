@@ -1,0 +1,103 @@
+-module(closerv).
+-export([start/1, stop/0]).
+
+% start misultin http server
+start(Port) ->
+    newsserv:start(),
+    feedserv:start(),
+    misultin:start_link([{port, Port}, {loop, fun(Req) -> handle_http(Req) end}]).
+
+% stop misultin
+stop() ->
+    misultin:stop(),
+    feedserv:terminate(),
+    newsserv:terminate().
+
+% callback function called on incoming http request
+handle_http(Req) ->
+	% dispatch to rest
+	Args = Req:parse_qs(),
+	handle(Req:get(method), Req:resource([lowercase, urldecode]), Req, Args).
+
+% ---------------------------- \/ handle rest --------------------------------------------------------------
+
+% handle a GET on /
+handle('GET', [], Req, _Args) ->
+	Req:ok([{"Content-Type", "text/plain"}], "Main home page.");
+
+handle('GET', ["api", "topics", "all"], Req, _Args) ->
+	TestData = newsserv:topics_all(),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "topics", "details"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:topics_details(TopicId, UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "user", "pref"], Req, Args) ->
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:user_pref(UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "user", "pref", "set"], Req, Args) ->
+	UserId = getIntArg("userId", Req, Args),
+	Pref = jsx:json_to_term(list_to_binary(getArg("prefTopics", Req, Args))),
+	TestData = newsserv:user_pref_set(UserId, Pref),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "next"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:story_next(TopicId, UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "previous"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:story_previous(TopicId, UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "peek"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:story_peek(TopicId, UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "get"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	StoryId = getIntArg("storyId", Req, Args),
+	TestData = newsserv:story_get(TopicId, StoryId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "details"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	StoryId = getIntArg("storyId", Req, Args),
+	TestData = newsserv:story_details(TopicId, StoryId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+handle('GET', ["api", "story", "mark"], Req, Args) ->
+	TopicId = getIntArg("topicId", Req, Args),
+	StoryId = getIntArg("storyId", Req, Args),
+	UserId = getIntArg("userId", Req, Args),
+	TestData = newsserv:story_mark(TopicId, StoryId, UserId),
+	Req:ok([{"Content-Type", "text/plain"}], binary_to_list(jsx:term_to_json(TestData)));
+
+% handle the 404 page not found
+handle(_, _, Req, _) ->
+	Req:ok([{"Content-Type", "text/plain"}], "Page not found.").
+
+
+getArg(Key, Req, Args) ->
+	case Req:get_variable(Key, Args) of
+                undefined ->
+                        Req:ok([{"Content-Type", "text/xml"}], "<misultin_test><error>" + Key + " not specified</error></misultin_test>");
+                Value ->
+                        Value
+        end.
+
+getIntArg(Key, Req, Args) ->
+    element(1,string:to_integer(getArg(Key, Req, Args))).
+
+
+% ---------------------------- /\ handle rest --------------------------------------------------------------
