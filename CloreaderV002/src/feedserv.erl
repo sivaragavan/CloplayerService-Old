@@ -1,6 +1,6 @@
 %% Event server
 -module(feedserv).
--export([start/0, terminate/0, init/0, loop/0]).
+-export([start/0, terminate/0, init/0, loop/0, parse_date/1]).
 
 start() ->
     inets:start(),
@@ -22,23 +22,54 @@ init() ->
 %%% The Server itself
 
 loop() ->
-    refresh_topics(newsserv:topics_sources()),
+    AllStories = refresh_topics(newsserv:topics_sources(), []),
+    SortedStories = sort_stories(AllStories, []),
+    process_insert_stories(SortedStories),
     timer:sleep(30000),
     loop().
 
-refresh_topics([]) -> ok;
-refresh_topics([{TopicId, Sources} | Rest]) ->
-    refresh_sources(TopicId, Sources),
-    refresh_topics(Rest).
+refresh_topics([], AllStories) -> AllStories;
+refresh_topics([{TopicId, Sources} | Rest], AllStories) ->
+    NewAllStories = refresh_sources(TopicId, Sources, AllStories),
+    refresh_topics(Rest, NewAllStories).
 
-refresh_sources(_,[]) -> ok;
-refresh_sources(TopicId, [{SourceName, SourceUrl} | Rest]) ->
+refresh_sources(_,[], AllStories) -> AllStories;
+refresh_sources(TopicId, [{SourceName, SourceUrl} | Rest], AllStories) ->
     {feed, _Source, _Url, Stories} = feedparser:parse_url(SourceUrl),
-    insert_stories(TopicId, Stories, SourceName),
-    refresh_sources(TopicId, Rest).
+    NewAllStories = insert_stories(TopicId, Stories, SourceName, AllStories),
+    refresh_sources(TopicId, Rest, NewAllStories).
 
-insert_stories(_,[],_) -> ok;
-insert_stories(TopicId, [{feedentry, HT, Date, Link, DT} | Rest], Source) ->
+insert_stories(_,[],_, AllStories) -> AllStories;
+insert_stories(TopicId, [{feedentry, HT, Date, Link, DT} | Rest], Source, AllStories) ->
+    %%io:format("~w : Parsing~n", [HT]),
+    NewAllStories = [{TopicId, HT, Link, Link, DT, parse_date(Date), Source} | AllStories],
+    insert_stories(TopicId, Rest, Source, NewAllStories).
+    
+process_insert_stories([]) -> ok;
+process_insert_stories([{TopicId, HT, Link, Link, DT, Date, Source} | Rest]) ->
     newsserv:story_add(TopicId, HT, Link, Link, DT, Date, Source),
-    insert_stories(TopicId, Rest, Source).
+    process_insert_stories(Rest).
+
+sort_stories(AllStories, []) ->
+    lists:keysort(6, AllStories).
+    
+parse_date(DateString) ->
+    {ok, [_,_,_,_,_,_,_], Left} = io_lib:fread("~3c, ~2d ~3c ~4d ~2d:~2d:~2d ", DateString),
+    Date = httpd_util:convert_request_date(DateString),
+    if
+	Left == "GMT" ->
+	    Date;
+	Left == "+0000" ->
+	    Date;
+	Left == "-0500" ->
+	    add(Date, {hours, 5});
+	Left == "EST" ->
+	    add(Date, {hours, 5})
+    end. 
+	    
+
+add(Date, {hours, N}) ->
+    New = calendar:datetime_to_gregorian_seconds(Date) + (N * 60 * 60),
+    calendar:gregorian_seconds_to_datetime(New).
+    
     

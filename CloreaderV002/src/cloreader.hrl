@@ -1,7 +1,8 @@
 
 -record(state, {
           topics,
-          users=dict:new()
+          users=dict:new(),
+	  storyStack=[]
          }
        ).
 
@@ -9,8 +10,8 @@
           name,
           sourceList,
           storyList=dict:new(),
-	  userList=[],
-	  lastStoryId=0
+	  lastStoryId=0,
+	  sourcePriority=dict:new()
          }
        ).
 
@@ -25,9 +26,10 @@
        ).
 
 -record(user, {
-	  prefTopics=[1,2,3,4,5],
+	  prefTopics=dict:new(),
           readStories=[],
 	  storyStack=[],
+	  nextStories=[],
 	  current={0,0}
          }
        ).
