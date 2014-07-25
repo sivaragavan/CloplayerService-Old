@@ -1,1 +1,6 @@
-Initial Commit
+# Cloreader Service
+
+What is Cloreader ?
+Cloreader is a talking news reader which can take voice commands to control the flow of the news articles and the way they are read.
+
+Cloreader Service is the supporting back end module which fetches the news articles and provides a combined feed over an API. the Cloreader Android App will consume these APIs to know what would be the next article to play.
