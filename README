@@ -4,4 +4,4 @@ Cloplayer Service
 What is Cloplayer ?
 Cloplayer is a talking news reader which can take voice commands to control the flow of the news articles and the way they are read.
 
-Cloplayer Service is the supporting back end module that fetches news articles from different channels and provides a combined feed over an API. the Cloplayer App (https://github.com/sivragav/CloplayerApp) will consume these APIs to know what would be the next article to play.
+Cloplayer Service is the supporting back end module that fetches news articles from different channels and provides a combined feed over an API. The Cloplayer App (https://github.com/sivragav/CloplayerApp) will consume these APIs to know what would be the next article to play.
